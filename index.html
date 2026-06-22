@@ -238,6 +238,7 @@ tbody td{padding:8px 11px;border-bottom:1px solid var(--border);}
   </div>
 </div>
 <div class="cbox full"><h3>Nota Média por Habilitação e Unidade</h3><div class="cwrap" style="height:360px"><canvas id="ch-hab-geral"></canvas></div></div>
+<div id="spark-geral" style="margin-top:20px"></div>
 </div>
 
 <div id="tab-brasilia" class="tab-content">
@@ -1094,6 +1095,7 @@ function renderAll() {
     pieChart(fd);
     geralHabBar(fd);
     rankingCharts(fd);
+    setTimeout(()=>{ renderItensSparkGeral('spark-geral', fi); }, 50);
   } else if (activeTab === 'brasilia') {
     renderCards('cards-brasilia','BRASÍLIA',fd,false);
     monthlyLine('ch-bsb-m',['BRASÍLIA'],fd);
@@ -2800,6 +2802,149 @@ function renderItensSparkUnit(divId, unit, filteredItens) {
   }, 30);
 }
 
+
+
+// ============ CONSOLIDATED ITENS SPARKLINE — ALL UNITS ============
+function renderItensSparkGeral(divId, filteredItens) {
+  const container = document.getElementById(divId);
+  if (!container) return;
+
+  const MES_SEQ = [1,2,3,4,5,6,7,8,9,10,11,12];
+  const MES_LABEL_MAP = {1:'jan/26',2:'fev/26',3:'mar/26',4:'abr/26',5:'mai/26',6:'jun/26',
+    7:'jul/26',8:'ago/26',9:'set/26',10:'out/26',11:'nov/26',12:'dez/26'};
+
+  const TIPOS = ['Aula Online','Aula Prática','Infraestrutura','Plataforma Avida','Professor','Triagem'];
+  const activeTypes = F.itens.length > 0 ? F.itens : TIPOS;
+
+  // Build lookup: tipo × mes → {sum, cnt} across ALL units
+  const lookup = {};
+  filteredItens.forEach(r => {
+    const g = IDX_GERAL[r['db-id']];
+    if (!g) return;
+    const m = g.mes_order;
+    if (!MES_SEQ.includes(m)) return;
+    if (F.mes && F.mes.length > 0) { if (!F.mes.includes(g.mes_label)) return; }
+    if (F.semana && g.semana_key !== F.semana) return;
+    const t = r.tipo_avaliacao;
+    const key = `${t}||${m}`;
+    if (!lookup[key]) lookup[key] = {sum:0, cnt:0};
+    lookup[key].sum += r.nota;
+    lookup[key].cnt++;
+  });
+
+  const presentMes = new Set(Object.keys(lookup).map(k => parseInt(k.split('||')[1])));
+  const mesSeq = MES_SEQ.filter(m => presentMes.has(m));
+  const mesLabels = mesSeq.map(m => MES_LABEL_MAP[m]);
+
+  if (!mesSeq.length) { container.innerHTML = ''; return; }
+
+  function getVal(t, m) {
+    const k = `${t}||${m}`;
+    return lookup[k] ? lookup[k].sum / lookup[k].cnt : null;
+  }
+  function colorVal(v) {
+    if (v === null) return '#94a3b8';
+    if (v >= 4.0) return '#16a34a';
+    if (v >= 3.5) return '#d97706';
+    return '#dc2626';
+  }
+
+  // Destroy old sparkline charts
+  Object.keys(CHARTS)
+    .filter(k => k.startsWith('sparkG-'))
+    .forEach(k => { if (CHARTS[k]) { CHARTS[k].destroy(); delete CHARTS[k]; } });
+
+  const cards = activeTypes.map(tipo => {
+    const vals = mesSeq.map(m => getVal(tipo, m));
+    if (!vals.some(v => v !== null)) return '';
+
+    const nonNull = vals.filter(v => v !== null);
+    const lastVal  = nonNull.length > 0 ? nonNull[nonNull.length - 1] : null;
+    const prevVal  = nonNull.length > 1 ? nonNull[nonNull.length - 2] : null;
+    const trend = lastVal !== null && prevVal !== null
+      ? (lastVal > prevVal + 0.05 ? '↑' : lastVal < prevVal - 0.05 ? '↓' : '→') : '';
+    const trendColor = trend==='↑'?'#16a34a':trend==='↓'?'#dc2626':'#94a3b8';
+    const lineColor  = colorVal(lastVal);
+    const cid = `sparkG-${tipo.replace(/[^a-z]/gi,'')}`;
+
+    // Total respondents for this item
+    const totalResp = mesSeq.reduce((acc, m) => {
+      const k = `${tipo}||${m}`;
+      return acc + (lookup[k] ? lookup[k].cnt : 0);
+    }, 0);
+
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#fff;min-width:160px;flex:1">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:var(--muted);margin-bottom:6px">${tipo}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:24px;font-weight:800;color:${lineColor}">${lastVal !== null ? lastVal.toFixed(2) : '—'}</span>
+        <span style="font-size:18px;color:${trendColor};font-weight:700">${trend}</span>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:6px">${totalResp} avaliações · todas unidades</div>
+      <div style="height:70px"><canvas id="${cid}"></canvas></div>
+    </div>`;
+  }).filter(Boolean);
+
+  if (!cards.length) { container.innerHTML = ''; return; }
+
+  container.innerHTML = `
+    <div class="cbox full">
+      <h3>📋 Avaliação Consolidada dos Itens Específicos <span style="font-size:12px;font-weight:400;color:var(--muted)">(escala 1–5 · todas as unidades)</span></h3>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
+        <span style="color:#16a34a;font-weight:600">■</span> ≥4.0 Bom &nbsp;
+        <span style="color:#d97706;font-weight:600">■</span> 3.5–3.9 Atenção &nbsp;
+        <span style="color:#dc2626;font-weight:600">■</span> &lt;3.5 Crítico &nbsp;&nbsp;
+        <span style="color:var(--muted)">Seta = mês atual vs mês anterior</span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">${cards.join('')}</div>
+    </div>`;
+
+  setTimeout(() => {
+    activeTypes.forEach(tipo => {
+      const cid = `sparkG-${tipo.replace(/[^a-z]/gi,'')}`;
+      const ctx = document.getElementById(cid);
+      if (!ctx) return;
+      const vals = mesSeq.map(m => getVal(tipo, m));
+      const nonNull = vals.filter(v => v !== null);
+      const lastVal = nonNull.length > 0 ? nonNull[nonNull.length - 1] : null;
+      const lineColor = colorVal(lastVal);
+
+      CHARTS[cid] = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: mesLabels,
+          datasets: [{
+            data: vals,
+            borderColor: lineColor,
+            backgroundColor: lineColor + '18',
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 3,
+            pointBackgroundColor: lineColor,
+            tension: 0.3,
+            spanGaps: false
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, clip: false,
+          animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: c => c.parsed.y !== null ? c.parsed.y.toFixed(2) : '—' } }
+          },
+          scales: {
+            y: { display: false, suggestedMin: 1, suggestedMax: 5 },
+            x: {
+              display: true,
+              grid: { display: false },
+              ticks: { font: { size: 9 }, maxRotation: 0, autoSkip: true, color: '#94a3b8' },
+              border: { display: false }
+            }
+          }
+        }
+      });
+    });
+  }, 30);
+}
 
 
 // ============ LOCALSTORAGE PERSISTENCE ============
