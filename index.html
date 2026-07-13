@@ -385,6 +385,14 @@ tbody td{padding:8px 11px;border-bottom:1px solid var(--border);}
 
 <div id="tab-triagem" class="tab-content">
   <div class="cbox full" style="margin-bottom:14px">
+    <h3 style="margin:0 0 4px">📈 Correlação: Nota Geral × Nota Triagem</h3>
+    <p style="font-size:11px;color:var(--muted);margin:0 0 14px;line-height:1.6">
+      Mede o quanto a nota específica de Triagem acompanha a nota geral de CSAT — coeficiente de Pearson (r), calculado por turma (médias) e por resposta individual. Respeita os filtros globais e os filtros de Curso/Unidade/Mês desta aba.
+    </p>
+    <div id="triagem-corr-wrap"></div>
+  </div>
+
+  <div class="cbox full" style="margin-bottom:14px">
     <h3 style="margin:0 0 4px">🩺 Cruzamento: Comentários sobre Pacientes/Triagem × CSAT por Turma</h3>
     <p style="font-size:11px;color:var(--muted);margin:0 0 14px;line-height:1.6">
       Classifica os comentários dos alunos em 3 categorias — <b>Qualidade da Triagem</b> (paciente mal triado, fora do perfil, sem queixa compatível com o módulo),
@@ -2710,6 +2718,156 @@ function triagemQuoteCard(r) {
   </div>`;
 }
 
+// ── Correlação Nota Geral x Nota Triagem (Pearson) ───────────────────────────
+function pearsonR(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+  const mx = xs.reduce((a,b)=>a+b, 0) / n;
+  const my = ys.reduce((a,b)=>a+b, 0) / n;
+  let num = 0, dx2 = 0, dy2 = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    num += dx * dy; dx2 += dx * dx; dy2 += dy * dy;
+  }
+  const den = Math.sqrt(dx2 * dy2);
+  return den === 0 ? null : num / den;
+}
+
+function interpretaR(r) {
+  if (r == null) return { label: 'Dados insuficientes', color: '#94a3b8' };
+  const abs = Math.abs(r);
+  const dir = r >= 0 ? 'positiva' : 'negativa';
+  let forca, color;
+  if (abs < 0.3)      { forca = 'fraca';    color = '#94a3b8'; }
+  else if (abs < 0.6) { forca = 'moderada'; color = '#d97706'; }
+  else                { forca = 'forte';    color = '#16a34a'; }
+  return { label: `Correlação ${forca} ${dir}`, color };
+}
+
+function computeCorrelacaoTriagem(baseGeral) {
+  const respRows = baseGeral.filter(r => r.nota_Triagem != null && r.nota_geral != null);
+  const rResp = pearsonR(respRows.map(r => r.nota_Triagem), respRows.map(r => r.nota_geral));
+
+  const map = {};
+  baseGeral.forEach(r => {
+    if (r.nota_Triagem == null) return;
+    const key = r.di_turma + '|||' + r.unidade_calc;
+    if (!map[key]) map[key] = { notas: [], notasTriagem: [] };
+    map[key].notas.push(r.nota_geral);
+    map[key].notasTriagem.push(r.nota_Triagem);
+  });
+  const turmaPoints = Object.values(map).map(v => ({
+    x: v.notasTriagem.reduce((a,b)=>a+b, 0) / v.notasTriagem.length,
+    y: v.notas.reduce((a,b)=>a+b, 0) / v.notas.length
+  }));
+  const rTurma = pearsonR(turmaPoints.map(p => p.x), turmaPoints.map(p => p.y));
+
+  return {
+    resposta: { r: rResp, n: respRows.length, points: respRows.map(r => ({ x: r.nota_Triagem, y: r.nota_geral })) },
+    turma: { r: rTurma, n: turmaPoints.length, points: turmaPoints }
+  };
+}
+
+function drawScatterCorr(canvasId, points, color, label) {
+  destroyChart(canvasId);
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  CHARTS[canvasId] = new Chart(ctx, {
+    type: 'scatter',
+    data: { datasets: [{ label, data: points, backgroundColor: color + '99', borderColor: color, pointRadius: 4, pointHoverRadius: 6 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `Triagem ${c.parsed.x.toFixed(1)} · Geral ${c.parsed.y.toFixed(1)}` } }
+      },
+      scales: {
+        x: { title: { display: true, text: 'Nota Triagem' }, min: 0, max: 10, grid: { color: '#f0f0f0' } },
+        y: { title: { display: true, text: 'Nota Geral' }, min: 0, max: 10, grid: { color: '#f0f0f0' } }
+      }
+    }
+  });
+}
+
+function explicaCorrelacaoTriagem(corr) {
+  const r  = corr.resposta.r;
+  const rt = corr.turma.r;
+  if (r == null && rt == null) {
+    return '<p style="font-size:13px;color:var(--muted);line-height:1.7">Não há dados suficientes (nota de Triagem preenchida) para calcular a correlação com os filtros atuais.</p>';
+  }
+
+  const descreve = (val) => {
+    if (val == null) return null;
+    const abs = Math.abs(val);
+    const dir = val >= 0 ? 'positiva' : 'negativa';
+    const forca = abs < 0.3 ? 'fraca' : abs < 0.6 ? 'moderada' : 'forte';
+    return { abs, dir, forca, val };
+  };
+
+  const dResp  = descreve(r);
+  const dTurma = descreve(rt);
+  let texto = '';
+
+  if (dTurma) {
+    texto += `Olhando por <b>turma</b> (média de cada uma), a Nota Triagem e a Nota Geral têm correlação <b>${dTurma.forca} ${dTurma.dir}</b> (r = ${dTurma.val.toFixed(2)}, ${corr.turma.n} turmas). `;
+    if (dTurma.dir === 'positiva' && dTurma.forca !== 'fraca') {
+      texto += 'Turmas em que os alunos avaliam melhor a triagem dos pacientes também tendem a dar notas gerais de CSAT mais altas — a qualidade da triagem parece pesar na satisfação geral dessas turmas. ';
+    } else if (dTurma.dir === 'negativa' && dTurma.forca !== 'fraca') {
+      texto += 'É um padrão incomum: turmas com pior avaliação de triagem tendem a ter Nota Geral melhor — vale investigar caso a caso, pode ser efeito de poucas turmas ou de outro fator dominando a nota geral. ';
+    } else {
+      texto += 'A relação é fraca — a Nota Geral da turma parece depender mais de outros fatores (aulas, professores, estrutura etc.) do que da nota de Triagem isoladamente. ';
+    }
+  }
+
+  if (dResp) {
+    texto += `Já olhando <b>resposta a resposta</b> (${corr.resposta.n} respostas individuais), a correlação é <b>${dResp.forca} ${dResp.dir}</b> (r = ${dResp.val.toFixed(2)}). `;
+    if (dTurma && dResp.forca !== dTurma.forca) {
+      texto += 'A força muda entre as duas visões, o que mostra que olhar só a média por turma pode esconder (ou exagerar) a variação real aluno a aluno — vale considerar as duas leituras juntas. ';
+    }
+  }
+
+  texto += '<br><br><span style="font-size:11px;color:var(--muted)">Lembrete: correlação mede associação, não causa — outros fatores (professor, estrutura, época do ano) podem influenciar as duas notas ao mesmo tempo.</span>';
+
+  return `<div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-top:14px">
+    <div style="font-size:12px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">O que essa correlação significa</div>
+    <p style="font-size:13px;line-height:1.7;color:var(--navy);margin:0">${texto}</p>
+  </div>`;
+}
+
+function renderCorrelacaoTriagem(baseGeral) {
+  const container = document.getElementById('triagem-corr-wrap');
+  if (!container) return;
+  const corr = computeCorrelacaoTriagem(baseGeral);
+  const infoResp = interpretaR(corr.resposta.r);
+  const infoTurma = interpretaR(corr.turma.r);
+
+  container.innerHTML = `
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+      <div class="cbox" style="flex:1;min-width:220px;text-align:center;border-top:4px solid ${infoTurma.color}">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Correlação por Turma (médias)</div>
+        <div style="font-size:34px;font-weight:800;color:${infoTurma.color}">${corr.turma.r != null ? corr.turma.r.toFixed(2) : '—'}</div>
+        <div style="font-size:12px;color:${infoTurma.color};font-weight:700">${infoTurma.label}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">${corr.turma.n} turma(s)</div>
+      </div>
+      <div class="cbox" style="flex:1;min-width:220px;text-align:center;border-top:4px solid ${infoResp.color}">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Correlação por Resposta Individual</div>
+        <div style="font-size:34px;font-weight:800;color:${infoResp.color}">${corr.resposta.r != null ? corr.resposta.r.toFixed(2) : '—'}</div>
+        <div style="font-size:12px;color:${infoResp.color};font-weight:700">${infoResp.label}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">${corr.resposta.n} resposta(s)</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:8px">
+      <div class="cbox" style="height:320px"><canvas id="ch-corr-turma"></canvas></div>
+      <div class="cbox" style="height:320px"><canvas id="ch-corr-resposta"></canvas></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted)">Eixo X = Nota Triagem · Eixo Y = Nota Geral · r de Pearson (−1 a 1): próximo de 0 = sem relação linear, próximo de ±1 = relação linear forte</div>
+    ${explicaCorrelacaoTriagem(corr)}
+  `;
+
+  drawScatterCorr('ch-corr-turma', corr.turma.points, '#01559B', 'Turmas');
+  drawScatterCorr('ch-corr-resposta', corr.resposta.points, '#7c3aed', 'Respostas');
+}
+
 function renderTriagemCruzamento(filteredData) {
   populateTriagemFilters();
 
@@ -2718,6 +2876,8 @@ function renderTriagemCruzamento(filteredData) {
   if (triagemFilters.curso)   baseGeral = baseGeral.filter(r => r.habilitacao === triagemFilters.curso);
   if (triagemFilters.unidade) baseGeral = baseGeral.filter(r => r.unidade_calc === triagemFilters.unidade);
   if (triagemFilters.mes)     baseGeral = baseGeral.filter(r => r.mes_label === triagemFilters.mes);
+
+  safeCall(()=>renderCorrelacaoTriagem(baseGeral), 'renderCorrelacaoTriagem');
 
   // Comentários: respeitam os mesmos filtros globais (via db-id) + filtros locais desta aba
   const filteredIds = new Set(filteredData.map(r => r['db-id']));
