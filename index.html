@@ -207,6 +207,7 @@ tbody td{padding:8px 11px;border-bottom:1px solid var(--border);}
   <button class="tab-btn" onclick="switchTab('itens')">📊 Itens Específicos</button>
   <button class="tab-btn" onclick="switchTab('modulos')">📚 Ranking por Módulo</button>
   <button class="tab-btn" onclick="switchTab('turmas')">🏫 Ranking por Turma</button>
+  <button class="tab-btn" onclick="switchTab('triagem')">🩺 Triagem & Pacientes</button>
   <button class="tab-btn" onclick="switchTab('resumo')">Resumo Executivo</button>
 </div>
 
@@ -379,6 +380,37 @@ tbody td{padding:8px 11px;border-bottom:1px solid var(--border);}
       % Aderência = % de respostas com nota ≥ 9 (promotores) sobre o total de respostas da turma · clique nos cabeçalhos para ordenar
     </div>
     <div id="turmas-table-wrap"></div>
+  </div>
+</div>
+
+<div id="tab-triagem" class="tab-content">
+  <div class="cbox full" style="margin-bottom:14px">
+    <h3 style="margin:0 0 4px">🩺 Cruzamento: Comentários sobre Pacientes/Triagem × CSAT por Turma</h3>
+    <p style="font-size:11px;color:var(--muted);margin:0 0 14px;line-height:1.6">
+      Classifica os comentários dos alunos em 3 categorias — <b>Qualidade da Triagem</b> (paciente mal triado, fora do perfil, sem queixa compatível com o módulo),
+      <b>Quantidade de Pacientes/Agenda</b> (poucos pacientes, agenda vazia, faltas/cancelamentos) e <b>Manifestação</b> (reclamação explícita sobre pacientes/triagem/agenda) —
+      e cruza com a Nota Geral e a Nota específica de Triagem de cada turma. Só aparecem turmas com pelo menos 1 comentário classificado em alguma categoria; clique nos cabeçalhos para ordenar.
+    </p>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="fg"><label>Curso</label><select id="triagem-f-curso"><option value="">Todos</option></select></div>
+      <div class="fg"><label>Unidade</label><select id="triagem-f-unidade"><option value="">Todas</option></select></div>
+      <div class="fg"><label>Mês</label><select id="triagem-f-mes"><option value="">Todos</option></select></div>
+      <button class="btn-reset" onclick="clearTriagemFilters()">Limpar filtros</button>
+    </div>
+    <div id="triagem-table-wrap"></div>
+  </div>
+
+  <div class="cbox full">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      <h3 style="margin:0">💬 Comentários Classificados</h3>
+      <input id="triagem-search" type="text" placeholder="Buscar no comentário ou turma..." style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;min-width:220px">
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="triagem-cat-qualidade" checked> Qualidade da Triagem</label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="triagem-cat-quantidade" checked> Quantidade/Agenda</label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="triagem-cat-manifestacao" checked> Manifestação</label>
+    </div>
+    <div id="triagem-list-wrap"></div>
   </div>
 </div>
 
@@ -1131,6 +1163,8 @@ function renderAll() {
     safeCall(()=>renderModulosRanking(fd), 'renderModulosRanking');
   } else if (activeTab === 'turmas') {
     safeCall(()=>renderTurmasRanking(fd), 'renderTurmasRanking');
+  } else if (activeTab === 'triagem') {
+    safeCall(()=>renderTriagemCruzamento(fd), 'renderTriagemCruzamento');
   } else if (activeTab === 'brasilia') {
     safeCall(()=>renderCards('cards-brasilia','BRASÍLIA',fd,false), 'renderCards');
     safeCall(()=>monthlyLine('ch-bsb-m',['BRASÍLIA'],fd), 'monthlyLine');
@@ -1903,6 +1937,26 @@ function buildSemanaCheckboxes() {
   });
 }
 
+// ============ CRUZAMENTO TRIAGEM x CSAT (comentários sobre pacientes) ============
+// Categorias específicas pedidas pelo usuário — independentes do TEMA_DICT/PROBLEMA_PATTERNS acima.
+const PATTERNS_TRIAGEM_QUALIDADE = ["mal triado","mal triados","mal triada","mal triadas","triado errado","triagem ruim","triagem mal feita","triagem inadequada","triagem errada","paciente nao elegivel","paciente inadequado","paciente errado","fora do perfil","perfil errado","sem queixa","nao tinha a queixa","queixa errada","nao correspondia","nao se encaixava","sem indicacao","sem criterio","paciente sem indicacao","triagem descuidada","nao condizia com o modulo","paciente nao condizia"];
+
+const PATTERNS_TRIAGEM_QUANTIDADE = ["poucos pacientes","pouco paciente","sem paciente","sem pacientes","faltou paciente","faltaram pacientes","nenhum paciente","agenda vazia","paciente nao veio","nao veio paciente","nao compareceu","cancelou","desmarcou","ociosidade","tempo ocioso","esperando paciente","sem agendamento","poucas vagas preenchidas","baixa demanda","falta de pacientes","poucos agendamentos","agenda descheia","muito tempo parado","pouco movimento","agenda fraca"];
+
+// "Manifestação" = comentário toca no tema pacientes/triagem/agenda E usa linguagem de reclamação/insatisfação explícita
+const PATTERNS_MANIFESTACAO_GATE = ["paciente","pacientes","triagem","agendamento","agenda"];
+const PATTERNS_MANIFESTACAO_MARCADORES = ["reclamacao","reclamar","reclamo","insatisfeito","insatisfeita","revoltado","revoltada","um absurdo","inaceitavel","muito ruim","pessimo","pessima","nunca mais","sempre acontece","de novo isso","ninguem resolve","precisa melhorar urgente","urgente","grave problema","decepcionado","decepcionada","frustrado","frustrada","um caos"];
+
+function classificaTriagemComentario(feedbackText) {
+  const norm = normPlano(feedbackText || '');
+  const hitAny = (list) => list.some(kw => norm.includes(normPlano(kw)));
+  const qualidade = hitAny(PATTERNS_TRIAGEM_QUALIDADE);
+  const quantidade = hitAny(PATTERNS_TRIAGEM_QUANTIDADE);
+  const gate = hitAny(PATTERNS_MANIFESTACAO_GATE);
+  const manifestacao = gate && hitAny(PATTERNS_MANIFESTACAO_MARCADORES);
+  return { qualidade, quantidade, manifestacao, any: qualidade || quantidade || manifestacao };
+}
+
 // ============ RESUMO EXECUTIVO ============
 const TEMA_DICT = {
   "plataforma":"Plataforma","avida":"Plataforma","avid":"Plataforma",
@@ -2500,6 +2554,250 @@ function renderTurmasRanking(filteredData) {
   `;
   const wrap = document.getElementById('turmas-table-wrap');
   if (wrap) wrap.innerHTML = bodyHtml;
+}
+
+// ============ ABA TRIAGEM & PACIENTES (cruzamento comentários x CSAT) ============
+let triagemSortState = { col: 'total_mencoes', dir: 'desc' };
+let triagemFilters = { curso: '', unidade: '', mes: '' };
+let triagemCatFilters = { qualidade: true, quantidade: true, manifestacao: true };
+let triagemSearchTerm = '';
+
+function clearTriagemFilters() {
+  triagemFilters = { curso: '', unidade: '', mes: '' };
+  ['triagem-f-curso','triagem-f-unidade','triagem-f-mes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  triagemCatFilters = { qualidade: true, quantidade: true, manifestacao: true };
+  ['triagem-cat-qualidade','triagem-cat-quantidade','triagem-cat-manifestacao'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = true;
+  });
+  const s = document.getElementById('triagem-search');
+  if (s) s.value = '';
+  triagemSearchTerm = '';
+  renderAll();
+}
+
+function populateTriagemFilters() {
+  const cursoSel = document.getElementById('triagem-f-curso');
+  const unidadeSel = document.getElementById('triagem-f-unidade');
+  const mesSel = document.getElementById('triagem-f-mes');
+  if (!cursoSel || !unidadeSel || !mesSel) return;
+
+  const cursos = [...new Set(DATA_GERAL.map(r => r.habilitacao))].sort();
+  const existingCursos = [...cursoSel.options].slice(1).map(o => o.value).join('|');
+  if (existingCursos !== cursos.join('|')) {
+    while (cursoSel.options.length > 1) cursoSel.remove(1);
+    cursos.forEach(h => { const o = document.createElement('option'); o.value = h; o.textContent = h; cursoSel.appendChild(o); });
+  }
+
+  const unidades = [...new Set(DATA_GERAL.map(r => r.unidade_calc))].sort();
+  const existingUnidades = [...unidadeSel.options].slice(1).map(o => o.value).join('|');
+  if (existingUnidades !== unidades.join('|')) {
+    while (unidadeSel.options.length > 1) unidadeSel.remove(1);
+    unidades.forEach(u => { const o = document.createElement('option'); o.value = u; o.textContent = u; unidadeSel.appendChild(o); });
+  }
+
+  const allMes = [
+    {o:9,l:'set/25'},{o:10,l:'out/25'},{o:11,l:'nov/25'},{o:12,l:'dez/25'},
+    {o:1,l:'jan/26'},{o:2,l:'fev/26'},{o:3,l:'mar/26'},{o:4,l:'abr/26'},{o:5,l:'mai/26'},{o:6,l:'jun/26'},{o:7,l:'jul/26'},{o:8,l:'ago/26'}
+  ];
+  const presentMes = new Set(DATA_GERAL.map(r => r.mes_label));
+  const mesLabels = allMes.filter(m => presentMes.has(m.l)).map(m => m.l);
+  const existingMes = [...mesSel.options].slice(1).map(o => o.value).join('|');
+  if (existingMes !== mesLabels.join('|')) {
+    while (mesSel.options.length > 1) mesSel.remove(1);
+    mesLabels.forEach(l => { const o = document.createElement('option'); o.value = l; o.textContent = l; mesSel.appendChild(o); });
+  }
+
+  if (!cursoSel._wired)   { cursoSel.addEventListener('change', e => { triagemFilters.curso = e.target.value; renderAll(); }); cursoSel._wired = true; }
+  if (!unidadeSel._wired) { unidadeSel.addEventListener('change', e => { triagemFilters.unidade = e.target.value; renderAll(); }); unidadeSel._wired = true; }
+  if (!mesSel._wired)     { mesSel.addEventListener('change', e => { triagemFilters.mes = e.target.value; renderAll(); }); mesSel._wired = true; }
+
+  ['triagem-cat-qualidade','triagem-cat-quantidade','triagem-cat-manifestacao'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el._wired) {
+      el.addEventListener('change', e => {
+        const key = id.replace('triagem-cat-','');
+        triagemCatFilters[key] = e.target.checked;
+        renderAll();
+      });
+      el._wired = true;
+    }
+  });
+
+  const search = document.getElementById('triagem-search');
+  if (search && !search._wired) {
+    search.addEventListener('input', e => { triagemSearchTerm = e.target.value; renderAll(); });
+    search._wired = true;
+  }
+}
+
+// Comentários (DATA_FEEDBACK_FULL) enriquecidos com nota_Triagem (join via db-id/db_id) e classificação
+function computeTriagemComentarios() {
+  return DATA_FEEDBACK_FULL.map(r => {
+    const g = IDX_GERAL[r.db_id] || {};
+    const cls = classificaTriagemComentario(r.feedback);
+    return Object.assign({}, r, { nota_Triagem: g.nota_Triagem, qualidade: cls.qualidade, quantidade: cls.quantidade, manifestacao: cls.manifestacao, any: cls.any });
+  }).filter(r => r.any);
+}
+
+// Agrega por turma: nota geral média e nota Triagem média vêm de TODAS as respostas da turma (filteredData),
+// as contagens de comentários vêm apenas das respostas com feedback escrito (comentarios)
+function computeTriagemRanking(filteredData, comentarios) {
+  const map = {};
+  filteredData.forEach(r => {
+    const key = r.di_turma + '|||' + r.unidade_calc;
+    if (!map[key]) map[key] = { turma: r.di_turma, curso: r.habilitacao, unidade: r.unidade_calc, notas: [], notasTriagem: [], qualidade: 0, quantidade: 0, manifestacao: 0 };
+    map[key].notas.push(r.nota_geral);
+    if (r.nota_Triagem != null) map[key].notasTriagem.push(r.nota_Triagem);
+  });
+  comentarios.forEach(r => {
+    const key = r.di_turma + '|||' + r.unidade;
+    if (!map[key]) map[key] = { turma: r.di_turma, curso: r.hab, unidade: r.unidade, notas: [], notasTriagem: [], qualidade: 0, quantidade: 0, manifestacao: 0 };
+    if (r.qualidade) map[key].qualidade++;
+    if (r.quantidade) map[key].quantidade++;
+    if (r.manifestacao) map[key].manifestacao++;
+  });
+  return Object.values(map)
+    .map(v => {
+      const total = v.notas.length;
+      const media = total ? v.notas.reduce((a,b)=>a+b, 0) / total : null;
+      const mediaTriagem = v.notasTriagem.length ? v.notasTriagem.reduce((a,b)=>a+b, 0) / v.notasTriagem.length : null;
+      return {
+        turma: v.turma, curso: v.curso, unidade: v.unidade,
+        media, mediaTriagem, total,
+        qualidade: v.qualidade, quantidade: v.quantidade, manifestacao: v.manifestacao,
+        total_mencoes: v.qualidade + v.quantidade + v.manifestacao
+      };
+    })
+    .filter(v => v.total_mencoes > 0);
+}
+
+function sortTriagem(col) {
+  if (triagemSortState.col === col) {
+    triagemSortState.dir = triagemSortState.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    triagemSortState = { col, dir: (col === 'turma' || col === 'curso' || col === 'unidade') ? 'asc' : 'desc' };
+  }
+  renderAll();
+}
+
+function triagemQuoteCard(r) {
+  const badges = [];
+  if (r.qualidade) badges.push('<span style="background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap">Qualidade da Triagem</span>');
+  if (r.quantidade) badges.push('<span style="background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap">Quantidade/Agenda</span>');
+  if (r.manifestacao) badges.push('<span style="background:#fee2e2;color:#b91c1c;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap">Manifestação</span>');
+  const notaG = r.nota != null ? r.nota.toFixed(1) : '—';
+  const notaT = r.nota_Triagem != null ? r.nota_Triagem.toFixed(1) : '—';
+  const hasMais = r.feedback.length > 220;
+  const uid = makeUID();
+  return `<div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:13px;line-height:1.6"
+    data-full="${r.feedback.replace(/"/g,'&quot;').replace(/'/g,'&#39;')}">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+      <span style="font-size:11px;font-weight:700;color:var(--navy)">${r.di_turma||''}</span>
+      <span style="font-size:10px;color:var(--muted)">— ${r.unidade||''}</span>
+      <span style="font-size:10px;background:#e5e7eb;padding:1px 7px;border-radius:8px;font-weight:600">Geral ${notaG}</span>
+      <span style="font-size:10px;background:#e5e7eb;padding:1px 7px;border-radius:8px;font-weight:600">Triagem ${notaT}</span>
+      <span style="font-size:10px;color:var(--muted);margin-left:auto">${r.mes_label||''}</span>
+    </div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">${badges.join('')}</div>
+    <div id="${uid}-t" style="white-space:pre-line">${hasMais ? r.feedback.slice(0,220)+'…' : r.feedback}</div>
+    ${hasMais ? `<button id="${uid}-b" data-open="0"
+      onclick="(function(b){var card=b.closest('[data-full]');var t=document.getElementById('${uid}-t');if(b.dataset.open==='1'){t.textContent=card.dataset.full.slice(0,220)+'…';b.textContent='▼ Ver mais';b.dataset.open='0';}else{t.textContent=card.dataset.full;b.textContent='▲ Ver menos';b.dataset.open='1';}})(this)"
+      style="background:none;border:none;color:var(--navy);font-size:11px;font-weight:600;cursor:pointer;padding:2px 0;text-decoration:underline">▼ Ver mais</button>` : ''}
+  </div>`;
+}
+
+function renderTriagemCruzamento(filteredData) {
+  populateTriagemFilters();
+
+  // Tabela: nota geral/triagem média da turma vem de TODAS as respostas (respeitando filtros globais + locais desta aba)
+  let baseGeral = filteredData;
+  if (triagemFilters.curso)   baseGeral = baseGeral.filter(r => r.habilitacao === triagemFilters.curso);
+  if (triagemFilters.unidade) baseGeral = baseGeral.filter(r => r.unidade_calc === triagemFilters.unidade);
+  if (triagemFilters.mes)     baseGeral = baseGeral.filter(r => r.mes_label === triagemFilters.mes);
+
+  // Comentários: respeitam os mesmos filtros globais (via db-id) + filtros locais desta aba
+  const filteredIds = new Set(filteredData.map(r => r['db-id']));
+  let comentarios = computeTriagemComentarios().filter(r => filteredIds.has(r.db_id));
+  if (triagemFilters.curso)   comentarios = comentarios.filter(r => r.hab === triagemFilters.curso);
+  if (triagemFilters.unidade) comentarios = comentarios.filter(r => r.unidade === triagemFilters.unidade);
+  if (triagemFilters.mes)     comentarios = comentarios.filter(r => r.mes_label === triagemFilters.mes);
+
+  let rankingRows = computeTriagemRanking(baseGeral, comentarios);
+  const { col, dir } = triagemSortState;
+  rankingRows.sort((a,b) => {
+    let av = a[col], bv = b[col];
+    if (av == null) av = dir === 'asc' ? Infinity : -Infinity;
+    if (bv == null) bv = dir === 'asc' ? Infinity : -Infinity;
+    if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+    if (av < bv) return dir === 'asc' ? -1 : 1;
+    if (av > bv) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const arrow = c => triagemSortState.col === c ? (triagemSortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  const th = (label, colKey) => `<th onclick="sortTriagem('${colKey}')" style="padding:8px 9px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;cursor:pointer;user-select:none">${label}${arrow(colKey)}</th>`;
+
+  const trs = rankingRows.map(r => {
+    const notaCls1 = r.media == null ? '' : (r.media >= 8 ? 'ng' : r.media >= 6.5 ? 'nw' : 'nb');
+    const notaCls2 = r.mediaTriagem == null ? '' : (r.mediaTriagem >= 8 ? 'ng' : r.mediaTriagem >= 6.5 ? 'nw' : 'nb');
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 9px;white-space:nowrap;font-weight:600">${r.turma}</td>
+      <td style="padding:7px 9px;white-space:nowrap;color:var(--muted);font-size:12px">${r.curso}</td>
+      <td style="padding:7px 9px;white-space:nowrap;color:var(--muted);font-size:12px">${r.unidade}</td>
+      <td style="padding:7px 9px;text-align:center">${r.media != null ? `<span class="${notaCls1}">${r.media.toFixed(2)}</span>` : '—'}</td>
+      <td style="padding:7px 9px;text-align:center">${r.mediaTriagem != null ? `<span class="${notaCls2}">${r.mediaTriagem.toFixed(2)}</span>` : '—'}</td>
+      <td style="padding:7px 9px;text-align:center;color:var(--muted)">${r.total}</td>
+      <td style="padding:7px 9px;text-align:center">${r.qualidade ? `<span style="font-weight:700;color:#b45309">${r.qualidade}</span>` : '0'}</td>
+      <td style="padding:7px 9px;text-align:center">${r.quantidade ? `<span style="font-weight:700;color:#b45309">${r.quantidade}</span>` : '0'}</td>
+      <td style="padding:7px 9px;text-align:center">${r.manifestacao ? `<span style="font-weight:700;color:#dc2626">${r.manifestacao}</span>` : '0'}</td>
+    </tr>`;
+  }).join('');
+
+  const tableHtml = `
+    <div style="overflow:auto;max-height:520px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead style="position:sticky;top:0;z-index:1">
+          <tr style="background:var(--navy);color:#fff">
+            ${th('Turma','turma')}
+            ${th('Curso','curso')}
+            ${th('Unidade','unidade')}
+            ${th('Nota Geral','media')}
+            ${th('Nota Triagem','mediaTriagem')}
+            ${th('Total Respostas','total')}
+            ${th('Qualidade Triagem','qualidade')}
+            ${th('Quantidade/Agenda','quantidade')}
+            ${th('Manifestações','manifestacao')}
+          </tr>
+        </thead>
+        <tbody>${trs || '<tr><td colspan="9" style="padding:14px;text-align:center;color:var(--muted)">Nenhuma turma com comentários nessas categorias para os filtros atuais</td></tr>'}</tbody>
+      </table>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">${rankingRows.length} turma(s) com pelo menos 1 comentário classificado</div>
+  `;
+  const tableWrap = document.getElementById('triagem-table-wrap');
+  if (tableWrap) tableWrap.innerHTML = tableHtml;
+
+  // Lista detalhada: aplica os checkboxes de categoria + busca por texto
+  let detalhe = comentarios.filter(r =>
+    (triagemCatFilters.qualidade && r.qualidade) ||
+    (triagemCatFilters.quantidade && r.quantidade) ||
+    (triagemCatFilters.manifestacao && r.manifestacao)
+  );
+  if (triagemSearchTerm) {
+    const term = triagemSearchTerm.toLowerCase();
+    detalhe = detalhe.filter(r => r.feedback.toLowerCase().includes(term) || (r.di_turma||'').toLowerCase().includes(term));
+  }
+  detalhe = [...detalhe].sort((a,b) => (b.ts||0) - (a.ts||0));
+
+  const listHtml = detalhe.length
+    ? detalhe.map(r => triagemQuoteCard(r)).join('')
+    : '<p style="color:var(--muted);font-size:12px;padding:8px 0">Nenhum comentário encontrado com os filtros atuais</p>';
+  const listWrap = document.getElementById('triagem-list-wrap');
+  if (listWrap) listWrap.innerHTML = `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${detalhe.length} comentário(s)</div><div style="max-height:640px;overflow:auto">${listHtml}</div>`;
 }
 
 // ============ RESUMO NPS (copiável para PPT) ============
