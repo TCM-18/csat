@@ -208,6 +208,7 @@ tbody td{padding:8px 11px;border-bottom:1px solid var(--border);}
   <button class="tab-btn" onclick="switchTab('modulos')">📚 Ranking por Módulo</button>
   <button class="tab-btn" onclick="switchTab('turmas')">🏫 Ranking por Turma</button>
   <button class="tab-btn" onclick="switchTab('triagem')">🩺 Triagem & Pacientes</button>
+  <button class="tab-btn" onclick="switchTab('comentarios')">💬 Comentários</button>
   <button class="tab-btn" onclick="switchTab('resumo')">Resumo Executivo</button>
 </div>
 
@@ -423,6 +424,37 @@ tbody td{padding:8px 11px;border-bottom:1px solid var(--border);}
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="triagem-cat-manifestacao" checked> Manifestação</label>
     </div>
     <div id="triagem-list-wrap"></div>
+  </div>
+</div>
+
+<div id="tab-comentarios" class="tab-content">
+  <div class="cbox full" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      <h3 style="margin:0">💬 Comentários</h3>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px">
+      <div class="fg"><label>Unidade</label><select id="comentarios-f-unidade"><option value="">Todas</option></select></div>
+      <div class="fg"><label>Classificação NPS</label><select id="comentarios-f-classificacao"><option value="">Todas</option><option value="Promotor">Promotor</option><option value="Neutro">Neutro</option><option value="Detrator">Detrator</option></select></div>
+      <div class="fg"><label>Curso</label><select id="comentarios-f-curso"><option value="">Todos</option></select></div>
+      <div class="fg"><label>Mês</label><select id="comentarios-f-mes"><option value="">Todos</option></select></div>
+      <button class="btn-reset" onclick="clearComentariosFilters()">Limpar filtros</button>
+    </div>
+  </div>
+
+  <div class="cbox full" style="margin-bottom:14px">
+    <h3 style="margin:0 0 4px">📊 Promotores, Neutros e Detratores por Unidade</h3>
+    <p style="font-size:11px;color:var(--muted);margin:0 0 14px;line-height:1.6">
+      NPS = % Promotores − % Detratores. Respeita os filtros globais e os filtros de Unidade/Classificação/Curso/Mês desta aba.
+    </p>
+    <div id="comentarios-analise-wrap"></div>
+  </div>
+
+  <div class="cbox full">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      <h3 style="margin:0">🗨️ Lista de Comentários</h3>
+      <input id="comentarios-search" type="text" placeholder="Buscar no comentário ou turma..." style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;min-width:220px">
+    </div>
+    <div id="comentarios-list-wrap"></div>
   </div>
 </div>
 
@@ -1229,6 +1261,8 @@ function renderAll() {
       safeCall(()=>renderTurmasNeg('turmas-neg-online','ONLINE',fd), 'renderTurmasNeg');
     }, 50);
     
+  } else if (activeTab === 'comentarios') {
+    safeCall(()=>renderComentariosTab(fd), 'renderComentariosTab');
   } else if (activeTab === 'resumo') {
     safeCall(()=>renderResumo(), 'renderResumo');
   } else if (activeTab === 'itens') {
@@ -2141,19 +2175,23 @@ function planoAcaoHtml(tema, negRows) {
 let _resumoUID = 0;
 function makeUID() { return 'q' + (++_resumoUID); }
 
-function quoteCard(r, type) {
+function quoteCard(r, type, opts) {
+  opts = opts || {};
   const bg     = type==='pos' ? '#f0fdf4' : type==='neg' ? '#fef2f2' : '#f8fafc';
   const border = type==='pos' ? '#86efac' : type==='neg' ? '#fca5a5' : '#e2e8f0';
   const nota   = r.nota != null
     ? `<span style="font-size:10px;background:#e5e7eb;padding:1px 7px;border-radius:8px;margin-left:6px;font-weight:600">${r.nota.toFixed(1)}</span>` : '';
   const uid = makeUID();
   const unidade = r.unidade ? ` <span style="font-size:10px;color:var(--muted);font-weight:400">— ${r.unidade}</span>` : '';
+  const turmaBadge = (opts.showTurma && r.di_turma)
+    ? `<span style="font-size:10px;background:#dbeafe;color:#1e3a8a;padding:1px 7px;border-radius:8px;font-weight:600">${r.di_turma}</span>` : '';
   const hasMais = r.feedback.length > 200;
   // Store full text in data attribute to avoid escaping issues
   return `<div style="background:${bg};border:1px solid ${border};border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:13px;line-height:1.6"
     data-full="${r.feedback.replace(/"/g,'&quot;').replace(/'/g,'&#39;')}">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">
       <span style="font-size:11px;font-weight:700;color:var(--navy)">${r.hab}${unidade}</span>
+      ${turmaBadge}
       ${nota}
       <span style="font-size:10px;color:var(--muted);margin-left:auto">${r.mes_label||''}</span>
     </div>
@@ -2966,6 +3004,162 @@ function renderTriagemCruzamento(filteredData) {
     : '<p style="color:var(--muted);font-size:12px;padding:8px 0">Nenhum comentário encontrado com os filtros atuais</p>';
   const listWrap = document.getElementById('triagem-list-wrap');
   if (listWrap) listWrap.innerHTML = `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${detalhe.length} comentário(s)</div><div style="max-height:640px;overflow:auto">${listHtml}</div>`;
+}
+
+// ============ ABA COMENTÁRIOS ============
+let comentariosFilters = { unidade: '', classificacao: '', curso: '', mes: '' };
+let comentariosSearchTerm = '';
+
+function clearComentariosFilters() {
+  comentariosFilters = { unidade: '', classificacao: '', curso: '', mes: '' };
+  ['comentarios-f-unidade','comentarios-f-classificacao','comentarios-f-curso','comentarios-f-mes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const s = document.getElementById('comentarios-search');
+  if (s) s.value = '';
+  comentariosSearchTerm = '';
+  renderAll();
+}
+
+function populateComentariosFilters() {
+  const unidadeSel = document.getElementById('comentarios-f-unidade');
+  const classSel = document.getElementById('comentarios-f-classificacao');
+  const cursoSel = document.getElementById('comentarios-f-curso');
+  const mesSel = document.getElementById('comentarios-f-mes');
+  if (!unidadeSel || !classSel || !cursoSel || !mesSel) return;
+
+  const unidades = [...new Set(DATA_GERAL.map(r => r.unidade_calc))].sort();
+  const existingUnidades = [...unidadeSel.options].slice(1).map(o => o.value).join('|');
+  if (existingUnidades !== unidades.join('|')) {
+    while (unidadeSel.options.length > 1) unidadeSel.remove(1);
+    unidades.forEach(u => { const o = document.createElement('option'); o.value = u; o.textContent = u; unidadeSel.appendChild(o); });
+  }
+
+  const cursos = [...new Set(DATA_GERAL.map(r => r.habilitacao))].sort();
+  const existingCursos = [...cursoSel.options].slice(1).map(o => o.value).join('|');
+  if (existingCursos !== cursos.join('|')) {
+    while (cursoSel.options.length > 1) cursoSel.remove(1);
+    cursos.forEach(h => { const o = document.createElement('option'); o.value = h; o.textContent = h; cursoSel.appendChild(o); });
+  }
+
+  const allMes = [
+    {o:9,l:'set/25'},{o:10,l:'out/25'},{o:11,l:'nov/25'},{o:12,l:'dez/25'},
+    {o:1,l:'jan/26'},{o:2,l:'fev/26'},{o:3,l:'mar/26'},{o:4,l:'abr/26'},{o:5,l:'mai/26'},{o:6,l:'jun/26'},{o:7,l:'jul/26'},{o:8,l:'ago/26'}
+  ];
+  const presentMes = new Set(DATA_GERAL.map(r => r.mes_label));
+  const mesLabels = allMes.filter(m => presentMes.has(m.l)).map(m => m.l);
+  const existingMes = [...mesSel.options].slice(1).map(o => o.value).join('|');
+  if (existingMes !== mesLabels.join('|')) {
+    while (mesSel.options.length > 1) mesSel.remove(1);
+    mesLabels.forEach(l => { const o = document.createElement('option'); o.value = l; o.textContent = l; mesSel.appendChild(o); });
+  }
+
+  if (!unidadeSel._wired) { unidadeSel.addEventListener('change', e => { comentariosFilters.unidade = e.target.value; renderAll(); }); unidadeSel._wired = true; }
+  if (!classSel._wired)   { classSel.addEventListener('change', e => { comentariosFilters.classificacao = e.target.value; renderAll(); }); classSel._wired = true; }
+  if (!cursoSel._wired)   { cursoSel.addEventListener('change', e => { comentariosFilters.curso = e.target.value; renderAll(); }); cursoSel._wired = true; }
+  if (!mesSel._wired)     { mesSel.addEventListener('change', e => { comentariosFilters.mes = e.target.value; renderAll(); }); mesSel._wired = true; }
+
+  const search = document.getElementById('comentarios-search');
+  if (search && !search._wired) {
+    search.addEventListener('input', e => { comentariosSearchTerm = e.target.value; renderAll(); });
+    search._wired = true;
+  }
+}
+
+// Análise por unidade (Promotor/Neutro/Detrator + NPS) a partir de DATA_GERAL já filtrada (globais + locais desta aba)
+function computeComentariosAnalise(baseGeral) {
+  return UNITS.filter(u => baseGeral.some(r => r.unidade_calc === u)).map(u => {
+    const data = baseGeral.filter(r => r.unidade_calc === u);
+    const total = data.length;
+    const prom = data.filter(r => r.classificacao === 'Promotor').length;
+    const neut = data.filter(r => r.classificacao === 'Neutro').length;
+    const detr = data.filter(r => r.classificacao === 'Detrator').length;
+    const pProm = total ? prom / total * 100 : 0;
+    const pNeut = total ? neut / total * 100 : 0;
+    const pDetr = total ? detr / total * 100 : 0;
+    const nps = Math.round(pProm - pDetr);
+    return { unidade: u, total, prom, neut, detr, pProm, pNeut, pDetr, nps };
+  });
+}
+
+function renderComentariosAnalise(baseGeral) {
+  const wrap = document.getElementById('comentarios-analise-wrap');
+  if (!wrap) return;
+  const rows = computeComentariosAnalise(baseGeral);
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="nodata">Sem dados para os filtros selecionados.</div>';
+    return;
+  }
+  const trs = rows.map(r => {
+    const npsCls = r.nps >= 50 ? 'ng' : r.nps >= 0 ? 'nw' : 'nb';
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 9px;white-space:nowrap;font-weight:600">${r.unidade}</td>
+      <td style="padding:7px 9px;text-align:center;color:var(--muted)">${r.total}</td>
+      <td style="padding:7px 9px;text-align:center;color:var(--good)">${r.pProm.toFixed(1)}%</td>
+      <td style="padding:7px 9px;text-align:center;color:var(--warn)">${r.pNeut.toFixed(1)}%</td>
+      <td style="padding:7px 9px;text-align:center;color:var(--bad)">${r.pDetr.toFixed(1)}%</td>
+      <td style="padding:7px 9px;text-align:center"><span class="${npsCls}" style="font-weight:700">${r.nps}</span></td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `
+    <div style="overflow:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="background:var(--navy);color:#fff">
+            <th style="padding:8px 9px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap">Unidade</th>
+            <th style="padding:8px 9px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap">Total Respostas</th>
+            <th style="padding:8px 9px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap">% Promotores</th>
+            <th style="padding:8px 9px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap">% Neutros</th>
+            <th style="padding:8px 9px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap">% Detratores</th>
+            <th style="padding:8px 9px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap">NPS</th>
+          </tr>
+        </thead>
+        <tbody>${trs}</tbody>
+      </table>
+    </div>`;
+}
+
+// Comentários (DATA_FEEDBACK_FULL) enriquecidos com classificação NPS (join via db-id/db_id, mesmo padrão de computeTriagemComentarios)
+function computeComentariosList() {
+  return DATA_FEEDBACK_FULL.map(r => {
+    const g = IDX_GERAL[r.db_id] || {};
+    const classificacao = g.classificacao || (r.nota != null ? classifyNota(r.nota) : null);
+    return Object.assign({}, r, { classificacao });
+  }).filter(r => r.feedback && r.feedback.trim().length > 0);
+}
+
+function renderComentariosList(filteredData) {
+  const filteredIds = new Set(filteredData.map(r => r['db-id']));
+  let comentarios = computeComentariosList().filter(r => filteredIds.has(r.db_id));
+  if (comentariosFilters.unidade)       comentarios = comentarios.filter(r => r.unidade === comentariosFilters.unidade);
+  if (comentariosFilters.classificacao) comentarios = comentarios.filter(r => r.classificacao === comentariosFilters.classificacao);
+  if (comentariosFilters.curso)         comentarios = comentarios.filter(r => r.hab === comentariosFilters.curso);
+  if (comentariosFilters.mes)           comentarios = comentarios.filter(r => r.mes_label === comentariosFilters.mes);
+  if (comentariosSearchTerm) {
+    const term = comentariosSearchTerm.toLowerCase();
+    comentarios = comentarios.filter(r => r.feedback.toLowerCase().includes(term) || (r.di_turma||'').toLowerCase().includes(term));
+  }
+  comentarios = [...comentarios].sort((a,b) => (b.ts||0) - (a.ts||0));
+
+  const typeFor = r => r.classificacao === 'Promotor' ? 'pos' : r.classificacao === 'Detrator' ? 'neg' : 'neu';
+  const listHtml = comentarios.length
+    ? comentarios.map(r => quoteCard(r, typeFor(r), {showTurma:true})).join('')
+    : '<p style="color:var(--muted);font-size:12px;padding:8px 0">Nenhum comentário encontrado com os filtros atuais</p>';
+  const listWrap = document.getElementById('comentarios-list-wrap');
+  if (listWrap) listWrap.innerHTML = `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${comentarios.length} comentário(s)</div><div style="max-height:640px;overflow:auto">${listHtml}</div>`;
+}
+
+function renderComentariosTab(filteredData) {
+  populateComentariosFilters();
+  let baseGeral = filteredData;
+  if (comentariosFilters.unidade)       baseGeral = baseGeral.filter(r => r.unidade_calc === comentariosFilters.unidade);
+  if (comentariosFilters.classificacao) baseGeral = baseGeral.filter(r => r.classificacao === comentariosFilters.classificacao);
+  if (comentariosFilters.curso)         baseGeral = baseGeral.filter(r => r.habilitacao === comentariosFilters.curso);
+  if (comentariosFilters.mes)           baseGeral = baseGeral.filter(r => r.mes_label === comentariosFilters.mes);
+
+  safeCall(()=>renderComentariosAnalise(baseGeral), 'renderComentariosAnalise');
+  safeCall(()=>renderComentariosList(filteredData), 'renderComentariosList');
 }
 
 // ============ RESUMO NPS (copiável para PPT) ============
